@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CampusFlow</title>
+<style>
+:root {
+    --navy: #10213f;
+    --navy-soft: #1c3766;
+    --blue-accent: #2f6fed;
+    --blue-pale: #eaf1ff;
+    --border-color: #dbe3f0;
+    --text-main: #1b2436;
+    --text-muted: #5b6b85;
+    --bg-page: #f5f7fb;
+    --white: #ffffff;
+    --green: #1f8a4c;
+    --red: #c0392b;
+}
+* {
+    box-sizing: border-box;
+}
+body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg-page);
+    color: var(--text-main);
+    font-family: -apple-system, Segoe UI, Arial, sans-serif;
+    line-height: 1.5;
+}
+header.top-header {
+    background: var(--navy);
+    color: var(--white);
+    padding: 32px 24px;
+    text-align: center;
+}
+header.top-header h1 {
+    margin: 0;
+    font-size: 34px;
+    letter-spacing: 1px;
+}
+header.top-header p.subtitle {
+    margin: 8px 0 0 0;
+    color: #c7d4ef;
+    font-size: 15px;
+}
+header.top-header p.tagline {
+    margin: 4px 0 0 0;
+    color: #8fa4d1;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 24px;
+}
+section.card {
+    background: var(--white);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 24px;
+}
+section.card h2 {
+    margin-top: 0;
+    color: var(--navy);
+    font-size: 20px;
+    border-bottom: 2px solid var(--blue-pale);
+    padding-bottom: 10px;
+}
+section.card h3 {
+    color: var(--navy-soft);
+    font-size: 16px;
+    margin-bottom: 6px;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+}
+table th, table td {
+    border: 1px solid var(--border-color);
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 14px;
+}
+table th {
+    background: var(--blue-pale);
+    color: var(--navy);
+}
+input[type=text], input[type=number] {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    font-size: 14px;
+    background: var(--white);
+    color: var(--text-main);
+}
+.grid-two {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+.algorithm-options {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin: 14px 0;
+}
+.algorithm-option {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 14px;
+    background: var(--blue-pale);
+}
+.algorithm-option label {
+    font-weight: bold;
+    color: var(--navy);
+}
+.algorithm-option p {
+    margin: 6px 0 0 0;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+button.run-button {
+    background: var(--blue-accent);
+    color: var(--white);
+    border: none;
+    padding: 14px 28px;
+    font-size: 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: block;
+    width: 100%;
+}
+button.run-button:hover {
+    background: var(--navy-soft);
+}
+.algorithm-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+.algorithm-card {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    background: var(--bg-page);
+}
+.algorithm-card h3 {
+    margin-top: 0;
+    color: var(--navy);
+}
+.algorithm-card .complexity {
+    display: inline-block;
+    margin-top: 8px;
+    background: var(--navy);
+    color: var(--white);
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+.flow-diagram {
+    text-align: center;
+    font-size: 15px;
+    color: var(--navy-soft);
+    font-weight: bold;
+    padding: 18px;
+    background: var(--blue-pale);
+    border-radius: 8px;
+    letter-spacing: 1px;
+}
+ul.plain-list li {
+    margin-bottom: 6px;
+}
+.novelty-grid, .adapt-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+.novelty-item, .adapt-item {
+    border-left: 4px solid var(--blue-accent);
+    background: var(--bg-page);
+    padding: 12px 16px;
+    border-radius: 4px;
+}
+.novelty-item h3, .adapt-item h3 {
+    margin: 0 0 6px 0;
+    color: var(--navy);
+    font-size: 15px;
+}
+.novelty-item p, .adapt-item p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+footer {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 20px;
+}
+@media (max-width: 720px) {
+    .grid-two, .algorithm-options, .algorithm-cards, .novelty-grid, .adapt-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+</head>
+<body>
+
+<header class="top-header">
+<h1>CampusFlow</h1>
+<p class="subtitle">Smart College Resource Allocation System</p>
+<p class="tagline">DSA-3 Algorithmic Resource Allocation Engine</p>
+</header>
+
+<main>
+
+<form action="/allocate" method="POST">
+
+<section class="card">
+<h2>1. Problem Configuration</h2>
+
+<h3>Students and Mentor Preferences</h3>
+<table>
+<tr><th>Student</th><th>Name</th><th>Preference 1</th><th>Preference 2</th><th>Preference 3</th></tr>
+<tr><td>S1</td><td><input type="text" name="s1_name" value="S1"></td><td><input type="text" name="s1_pref1" value="M1"></td><td><input type="text" name="s1_pref2" value="M2"></td><td><input type="text" name="s1_pref3" value=""></td></tr>
+<tr><td>S2</td><td><input type="text" name="s2_name" value="S2"></td><td><input type="text" name="s2_pref1" value="M2"></td><td><input type="text" name="s2_pref2" value="M1"></td><td><input type="text" name="s2_pref3" value=""></td></tr>
+<tr><td>S3</td><td><input type="text" name="s3_name" value="S3"></td><td><input type="text" name="s3_pref1" value="M1"></td><td><input type="text" name="s3_pref2" value="M3"></td><td><input type="text" name="s3_pref3" value=""></td></tr>
+<tr><td>S4</td><td><input type="text" name="s4_name" value="S4"></td><td><input type="text" name="s4_pref1" value="M2"></td><td><input type="text" name="s4_pref2" value="M3"></td><td><input type="text" name="s4_pref3" value=""></td></tr>
+<tr><td>S5</td><td><input type="text" name="s5_name" value="S5"></td><td><input type="text" name="s5_pref1" value="M3"></td><td><input type="text" name="s5_pref2" value="M1"></td><td><input type="text" name="s5_pref3" value=""></td></tr>
+<tr><td>S6</td><td><input type="text" name="s6_name" value="S6"></td><td><input type="text" name="s6_pref1" value="M1"></td><td><input type="text" name="s6_pref2" value="M2"></td><td><input type="text" name="s6_pref3" value=""></td></tr>
+</table>
+
+<h3>Mentors and Capacity</h3>
+<table>
+<tr><th>Mentor</th><th>Name</th><th>Capacity (Seats)</th></tr>
+<tr><td>M1</td><td><input type="text" name="m1_name" value="M1"></td><td><input type="number" name="m1_cap" value="2" min="0"></td></tr>
+<tr><td>M2</td><td><input type="text" name="m2_name" value="M2"></td><td><input type="number" name="m2_cap" value="2" min="0"></td></tr>
+<tr><td>M3</td><td><input type="text" name="m3_name" value="M3"></td><td><input type="number" name="m3_cap" value="1" min="0"></td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>2. Algorithm Selection</h2>
+<div class="algorithm-options">
+<div class="algorithm-option">
+<label><input type="radio" name="algorithm" value="ek" checked> Edmonds-Karp</label>
+<p>BFS-based augmenting path max flow. Easy to trace step by step.</p>
+</div>
+<div class="algorithm-option">
+<label><input type="radio" name="algorithm" value="dinic"> Dinic</label>
+<p>Level graph and blocking flow. Faster on larger graphs.</p>
+</div>
+<div class="algorithm-option">
+<label><input type="radio" name="algorithm" value="mcmf"> Preference Optimized (Min-Cost Max-Flow)</label>
+<p>Maximizes allocations first, then minimizes total preference cost.</p>
+</div>
+</div>
+</section>
+
+<section class="card">
+<h2>3. Run Allocation</h2>
+<button class="run-button" type="submit">Run Allocation</button>
+</section>
+
+</form>
+
+<section class="card">
+<h2>4. Graph Model Explanation</h2>
+<div class="flow-diagram">SOURCE &rarr; STUDENTS &rarr; MENTORS &rarr; SINK</div>
+<ul class="plain-list">
+<li>Source &rarr; Student capacity = 1 (each student can be allocated once)</li>
+<li>Student &rarr; Mentor capacity = 1, only drawn between compatible pairs</li>
+<li>Mentor &rarr; Sink capacity = mentor seat count</li>
+<li>One unit of flow from source to sink represents one successful student-mentor assignment</li>
+</ul>
+</section>
+
+<section class="card">
+<h2>5. Algorithms Used</h2>
+<div class="algorithm-cards">
+
+<div class="algorithm-card">
+<h3>Bipartite Matching</h3>
+<p><b>Purpose:</b> Match two disjoint node groups using augmenting paths.</p>
+<p><b>CampusFlow use:</b> Baseline student-mentor matching before capacity-aware flow is applied.</p>
+<span class="complexity">O(V * E)</span>
+</div>
+
+<div class="algorithm-card">
+<h3>Edmonds-Karp</h3>
+<p><b>Purpose:</b> Compute maximum flow using BFS to pick the shortest augmenting path.</p>
+<p><b>CampusFlow use:</b> Finds the maximum number of students that can be allocated to mentors.</p>
+<span class="complexity">O(V * E^2)</span>
+</div>
+
+<div class="algorithm-card">
+<h3>Max-Flow / Min-Cut</h3>
+<p><b>Purpose:</b> Identify the saturated edges that limit further flow.</p>
+<p><b>CampusFlow use:</b> Explains exactly which mentors caused unallocated students.</p>
+<span class="complexity">O(V + E)</span>
+</div>
+
+<div class="algorithm-card">
+<h3>Min-Cost Max-Flow</h3>
+<p><b>Purpose:</b> Among all maximum flows, choose the one with lowest total edge cost.</p>
+<p><b>CampusFlow use:</b> Maximizes allocation count, then improves preference satisfaction.</p>
+<span class="complexity">O(V * E^2) using Bellman-Ford</span>
+</div>
+
+<div class="algorithm-card">
+<h3>Dinic</h3>
+<p><b>Purpose:</b> Compute maximum flow using level graphs and blocking flow.</p>
+<p><b>CampusFlow use:</b> Faster comparison algorithm for the same allocation problem.</p>
+<span class="complexity">O(V^2 * E)</span>
+</div>
+
+</div>
+</section>
+
+<section class="card">
+<h2>6. Project Novelty</h2>
+<div class="novelty-grid">
+<div class="novelty-item">
+<h3>Reusable Optimization Engine</h3>
+<p>The same graph-based allocation model can be reused for mentors, electives, labs, classrooms, project guides and placement slots.</p>
+</div>
+<div class="novelty-item">
+<h3>Explainable Allocation</h3>
+<p>The system explains why a student was allocated or unallocated using residual capacity and min-cut information.</p>
+</div>
+<div class="novelty-item">
+<h3>Preference-Aware Allocation</h3>
+<p>Min-Cost Max-Flow can optimize preference quality in addition to allocation count.</p>
+</div>
+<div class="novelty-item">
+<h3>Algorithm Comparison</h3>
+<p>Edmonds-Karp and Dinic can be compared using the same allocation dataset.</p>
+</div>
+<div class="novelty-item">
+<h3>Bottleneck Analysis</h3>
+<p>CampusFlow identifies saturated resources and capacity shortages.</p>
+</div>
+</div>
+</section>
+
+<section class="card">
+<h2>7. Adaptability</h2>
+<div class="adapt-grid">
+<div class="adapt-item"><h3>Student &harr; Mentor</h3><p>Primary working scenario in this build.</p></div>
+<div class="adapt-item"><h3>Student &harr; Elective</h3><p>Electives replace mentors, seat counts replace capacity.</p></div>
+<div class="adapt-item"><h3>Batch &harr; Lab</h3><p>Batches replace students, lab slots replace mentors.</p></div>
+<div class="adapt-item"><h3>Course &harr; Classroom</h3><p>Classrooms become capacity-limited resources.</p></div>
+<div class="adapt-item"><h3>Team &harr; Project Guide</h3><p>Guides replace mentors, teams replace students.</p></div>
+<div class="adapt-item"><h3>Student &harr; Placement Slot</h3><p>Placement slots become capacity-limited resources.</p></div>
+</div>
+<p style="color:var(--text-muted); font-size:13px; margin-top:14px;">Only entities, capacities, compatibility and preferences change between scenarios. The core flow algorithm remains the same.</p>
+</section>
+
+<section class="card">
+<h2>8. Future Scope</h2>
+<ul class="plain-list">
+<li>Real-time reallocation</li>
+<li>Fairness constraints</li>
+<li>Department quotas</li>
+<li>Workload balancing</li>
+<li>Larger datasets</li>
+<li>ERP integration</li>
+<li>Timetable integration</li>
+<li>Predictive capacity planning</li>
+<li>Audit history</li>
+<li>What-if simulations</li>
+<li>Faster flow algorithms</li>
+</ul>
+</section>
+
+</main>
+
+<footer>CampusFlow &mdash; Smart College Resource Allocation System</footer>
+
+</body>
+</html>
