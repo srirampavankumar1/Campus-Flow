@@ -63,7 +63,7 @@ public class EdmondsKarp {
                 break;
             }
 
-            int bottleneckFlow = Integer.MAX_VALUE;
+            int bottleneckFlow = 1000000000;
             int traceNode = sink;
             while (traceNode != source) {
                 int previousNode = parent[traceNode];

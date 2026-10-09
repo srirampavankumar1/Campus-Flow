@@ -1,0 +1,7 @@
+FROM eclipse-temurin:21-jdk-alpine
+WORKDIR /app
+COPY *.java index.html ./
+RUN javac *.java
+ENV PORT=80
+EXPOSE 80
+CMD ["java", "-XX:+UseSerialGC", "-Xmx200m", "-XX:TieredStopAtLevel=1", "Main"]

@@ -1,23 +1,26 @@
-import java.io.BufferedReader;
-import java.io.File;
 import java.io.FileInputStream;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.URLDecoder;
 
 public class Main {
 
-    private static final int STUDENT_COUNT = 6;
-    private static final int MENTOR_COUNT = 3;
-    private static final int MAX_PREFERENCES = 3;
-    private static final int SERVER_PORT = 8080;
+    private static final int DEFAULT_PORT = 8080;
 
     public static void main(String[] args) throws Exception {
-        ServerSocket serverSocket = new ServerSocket(SERVER_PORT);
+        int serverPort = DEFAULT_PORT;
+        String portFromEnvironment = System.getenv("PORT");
+        if (portFromEnvironment != null) {
+            int parsedPort = TextTools.parseNonNegativeNumber(portFromEnvironment);
+            if (parsedPort > 0) {
+                serverPort = parsedPort;
+            }
+        }
+
+        ServerSocket serverSocket = new ServerSocket(serverPort);
         System.out.println("CampusFlow running");
-        System.out.println("Open http://localhost:" + SERVER_PORT);
+        System.out.println("Open http://localhost:" + serverPort);
 
         while (true) {
             Socket clientSocket = serverSocket.accept();
@@ -29,6 +32,8 @@ public class Main {
 }
 
 class CampusFlowRequestHandler implements Runnable {
+
+    private static final int REQUEST_BUFFER_SIZE = 65536;
 
     private Socket clientSocket;
 
@@ -45,90 +50,190 @@ class CampusFlowRequestHandler implements Runnable {
         try {
             clientSocket.close();
         } catch (Exception ignoredException) {
+            System.out.println("Socket close failed");
         }
     }
 
     private void handleConnection() throws Exception {
-        InputStreamReader inputStreamReader = new InputStreamReader(clientSocket.getInputStream(), "UTF-8");
-        BufferedReader reader = new BufferedReader(inputStreamReader);
-
-        String requestLine = reader.readLine();
-        if (requestLine == null || requestLine.length() == 0) {
-            return;
-        }
-
-        String[] requestLineParts = requestLine.split(" ");
-        if (requestLineParts.length < 2) {
-            return;
-        }
-        String httpMethod = requestLineParts[0];
-        String requestPath = requestLineParts[1];
-
+        InputStream inputStream = clientSocket.getInputStream();
+        byte[] buffer = new byte[REQUEST_BUFFER_SIZE];
+        int received = 0;
+        int headerEnd = -1;
         int contentLength = 0;
-        String headerLine = reader.readLine();
-        while (headerLine != null && headerLine.length() > 0) {
-            String lowerHeaderLine = headerLine.toLowerCase();
-            if (lowerHeaderLine.startsWith("content-length:")) {
-                String lengthText = headerLine.substring(headerLine.indexOf(':') + 1).trim();
-                contentLength = Integer.parseInt(lengthText);
+        boolean bodyIsChunked = false;
+
+        while (received < buffer.length) {
+            int bytesRead = inputStream.read(buffer, received, buffer.length - received);
+            if (bytesRead <= 0) {
+                break;
             }
-            headerLine = reader.readLine();
+            received = received + bytesRead;
+
+            if (headerEnd == -1) {
+                headerEnd = findHeaderEnd(buffer, received);
+                if (headerEnd != -1) {
+                    String headerText = bytesToText(buffer, 0, headerEnd);
+                    contentLength = readContentLength(headerText);
+                    bodyIsChunked = TextTools.containsIgnoringCase(readHeaderValue(headerText, "transfer-encoding:"), "chunked");
+                }
+            }
+
+            if (headerEnd != -1 && isBodyComplete(buffer, headerEnd, received, contentLength, bodyIsChunked)) {
+                break;
+            }
+        }
+
+        if (headerEnd == -1) {
+            return;
+        }
+
+        String headerText = bytesToText(buffer, 0, headerEnd);
+        int firstLineEnd = TextTools.indexOfChar(headerText, '\n', 0);
+        String requestLine = TextTools.trim(TextTools.cut(headerText, 0, firstLineEnd));
+        int firstSpace = TextTools.indexOfChar(requestLine, ' ', 0);
+        if (firstSpace == -1) {
+            return;
+        }
+        int secondSpace = TextTools.indexOfChar(requestLine, ' ', firstSpace + 1);
+        if (secondSpace == -1) {
+            secondSpace = requestLine.length();
+        }
+        String httpMethod = TextTools.cut(requestLine, 0, firstSpace);
+        String requestPath = TextTools.cut(requestLine, firstSpace + 1, secondSpace);
+        int queryStart = TextTools.indexOfChar(requestPath, '?', 0);
+        if (queryStart != -1) {
+            requestPath = TextTools.cut(requestPath, 0, queryStart);
         }
 
         String requestBody = "";
-        if (contentLength > 0) {
-            char[] bodyChars = new char[contentLength];
-            int totalCharsRead = 0;
-            while (totalCharsRead < contentLength) {
-                int charsRead = reader.read(bodyChars, totalCharsRead, contentLength - totalCharsRead);
-                if (charsRead == -1) {
-                    break;
-                }
-                totalCharsRead = totalCharsRead + charsRead;
+        if (bodyIsChunked) {
+            requestBody = decodeChunkedBody(buffer, headerEnd, received);
+        } else {
+            int bodyEnd = headerEnd + contentLength;
+            if (bodyEnd > received) {
+                bodyEnd = received;
             }
-            requestBody = new String(bodyChars, 0, totalCharsRead);
+            requestBody = bytesToText(buffer, headerEnd, bodyEnd);
         }
 
-        if (httpMethod.equals("POST") && requestPath.equals("/allocate")) {
-            String resultHtml = CampusFlowEngine.processAllocation(requestBody);
-            sendResponse(200, "text/html; charset=UTF-8", resultHtml);
-        } else if (httpMethod.equals("GET") && (requestPath.equals("/") || requestPath.equals("/index.html"))) {
-            String pageHtml = readIndexHtml();
-            sendResponse(200, "text/html; charset=UTF-8", pageHtml);
+        boolean isHomePage = TextTools.sameText(requestPath, "/") || TextTools.sameText(requestPath, "/index.html");
+
+        if (TextTools.sameText(httpMethod, "POST") && TextTools.sameText(requestPath, "/allocate")) {
+            TextBuilder resultPage = CampusFlowEngine.processAllocation(requestBody);
+            sendResponse(200, "text/html; charset=UTF-8", resultPage);
+        } else if (TextTools.sameText(httpMethod, "GET") && isHomePage) {
+            sendResponse(200, "text/html; charset=UTF-8", readIndexHtml());
         } else {
-            sendResponse(404, "text/plain; charset=UTF-8", "Not Found");
+            TextBuilder notFoundBody = new TextBuilder();
+            notFoundBody.append("Not Found");
+            sendResponse(404, "text/plain; charset=UTF-8", notFoundBody);
         }
     }
 
-    private String readIndexHtml() throws Exception {
-        File htmlFile = new File("index.html");
-        FileInputStream fileInputStream = new FileInputStream(htmlFile);
-        byte[] fileBytes = new byte[(int) htmlFile.length()];
-        int totalBytesRead = 0;
-        while (totalBytesRead < fileBytes.length) {
-            int bytesRead = fileInputStream.read(fileBytes, totalBytesRead, fileBytes.length - totalBytesRead);
-            if (bytesRead == -1) {
+    private int findHeaderEnd(byte[] buffer, int received) {
+        for (int index = 0; index + 3 < received; index++) {
+            if (buffer[index] == '\r' && buffer[index + 1] == '\n' && buffer[index + 2] == '\r' && buffer[index + 3] == '\n') {
+                return index + 4;
+            }
+        }
+        return -1;
+    }
+
+    private String bytesToText(byte[] buffer, int start, int end) {
+        TextBuilder text = new TextBuilder();
+        for (int index = start; index < end; index++) {
+            text.append((char) (buffer[index] & 0xFF));
+        }
+        return text.toText();
+    }
+
+    private String readHeaderValue(String headerText, String headerNameWithColon) {
+        int lineStart = 0;
+        while (lineStart < headerText.length()) {
+            int lineEnd = TextTools.indexOfChar(headerText, '\n', lineStart);
+            if (lineEnd == -1) {
+                lineEnd = headerText.length();
+            }
+            String line = TextTools.cut(headerText, lineStart, lineEnd);
+            if (TextTools.startsWithIgnoringCase(line, headerNameWithColon)) {
+                return TextTools.trim(TextTools.cut(line, headerNameWithColon.length(), line.length()));
+            }
+            lineStart = lineEnd + 1;
+        }
+        return "";
+    }
+
+    private int readContentLength(String headerText) {
+        return TextTools.parseNonNegativeNumber(readHeaderValue(headerText, "content-length:"));
+    }
+
+    private boolean isBodyComplete(byte[] buffer, int headerEnd, int received, int contentLength, boolean bodyIsChunked) {
+        if (bodyIsChunked) {
+            if (received < headerEnd + 5) {
+                return false;
+            }
+            return buffer[received - 5] == '0' && buffer[received - 4] == '\r' && buffer[received - 3] == '\n'
+                && buffer[received - 2] == '\r' && buffer[received - 1] == '\n';
+        }
+        return received - headerEnd >= contentLength;
+    }
+
+    private String decodeChunkedBody(byte[] buffer, int start, int end) {
+        TextBuilder body = new TextBuilder();
+        int position = start;
+        while (position < end) {
+            int chunkSize = 0;
+            while (position < end && TextTools.hexDigitValue((char) buffer[position]) >= 0) {
+                chunkSize = (chunkSize * 16) + TextTools.hexDigitValue((char) buffer[position]);
+                position++;
+            }
+            while (position < end && buffer[position] != '\n') {
+                position++;
+            }
+            position++;
+            if (chunkSize == 0) {
                 break;
             }
-            totalBytesRead = totalBytesRead + bytesRead;
+            for (int copied = 0; copied < chunkSize && position < end; copied++) {
+                body.append((char) (buffer[position] & 0xFF));
+                position++;
+            }
+            position = position + 2;
         }
-        fileInputStream.close();
-        return new String(fileBytes, "UTF-8");
+        return body.toText();
     }
 
-    private void sendResponse(int statusCode, String contentType, String body) throws Exception {
-        byte[] bodyBytes = body.getBytes("UTF-8");
-        String statusText = statusCode == 200 ? "OK" : "Not Found";
+    private TextBuilder readIndexHtml() throws Exception {
+        FileInputStream fileInputStream = new FileInputStream("index.html");
+        TextBuilder content = new TextBuilder();
+        byte[] chunk = new byte[4096];
+        int bytesRead = fileInputStream.read(chunk);
+        while (bytesRead > 0) {
+            for (int index = 0; index < bytesRead; index++) {
+                content.append((char) (chunk[index] & 0xFF));
+            }
+            bytesRead = fileInputStream.read(chunk);
+        }
+        fileInputStream.close();
+        return content;
+    }
 
-        StringBuilder headerBuilder = new StringBuilder();
-        headerBuilder.append("HTTP/1.1 ").append(statusCode).append(" ").append(statusText).append("\r\n");
-        headerBuilder.append("Content-Type: ").append(contentType).append("\r\n");
-        headerBuilder.append("Content-Length: ").append(bodyBytes.length).append("\r\n");
-        headerBuilder.append("Connection: close\r\n");
-        headerBuilder.append("\r\n");
+    private void sendResponse(int statusCode, String contentType, TextBuilder body) throws Exception {
+        byte[] bodyBytes = body.toBytes();
+
+        TextBuilder header = new TextBuilder();
+        header.append("HTTP/1.1 ").append(statusCode);
+        if (statusCode == 200) {
+            header.append(" OK\r\n");
+        } else {
+            header.append(" Not Found\r\n");
+        }
+        header.append("Content-Type: ").append(contentType).append("\r\n");
+        header.append("Content-Length: ").append(bodyBytes.length).append("\r\n");
+        header.append("Connection: close\r\n\r\n");
 
         OutputStream outputStream = clientSocket.getOutputStream();
-        outputStream.write(headerBuilder.toString().getBytes("UTF-8"));
+        outputStream.write(header.toBytes());
         outputStream.write(bodyBytes);
         outputStream.flush();
     }
@@ -140,16 +245,21 @@ class CampusFlowEngine {
     private static final int MENTOR_COUNT = 3;
     private static final int MAX_PREFERENCES = 3;
 
-    public static String processAllocation(String requestBody) {
+    public static TextBuilder processAllocation(String requestBody) {
         String[] studentNames = new String[STUDENT_COUNT];
         String[][] studentPreferences = new String[STUDENT_COUNT][MAX_PREFERENCES];
 
         for (int studentIndex = 0; studentIndex < STUDENT_COUNT; studentIndex++) {
-            String rawName = extractFormValue(requestBody, "s" + (studentIndex + 1) + "_name").trim();
-            studentNames[studentIndex] = rawName.length() > 0 ? rawName : ("S" + (studentIndex + 1));
+            int studentNumber = studentIndex + 1;
+            String rawName = TextTools.trim(TextTools.findFormValue(requestBody, TextTools.fieldName('s', studentNumber, "_name")));
+            if (rawName.length() > 0) {
+                studentNames[studentIndex] = rawName;
+            } else {
+                studentNames[studentIndex] = TextTools.labelWithNumber('S', studentNumber);
+            }
             for (int preferenceIndex = 0; preferenceIndex < MAX_PREFERENCES; preferenceIndex++) {
-                String rawPreference = extractFormValue(requestBody, "s" + (studentIndex + 1) + "_pref" + (preferenceIndex + 1)).trim();
-                studentPreferences[studentIndex][preferenceIndex] = rawPreference;
+                String fieldName = TextTools.fieldName('s', studentNumber, "_pref" + (preferenceIndex + 1));
+                studentPreferences[studentIndex][preferenceIndex] = TextTools.trim(TextTools.findFormValue(requestBody, fieldName));
             }
         }
 
@@ -157,26 +267,18 @@ class CampusFlowEngine {
         int[] mentorCapacities = new int[MENTOR_COUNT];
 
         for (int mentorIndex = 0; mentorIndex < MENTOR_COUNT; mentorIndex++) {
-            String rawName = extractFormValue(requestBody, "m" + (mentorIndex + 1) + "_name").trim();
-            mentorNames[mentorIndex] = rawName.length() > 0 ? rawName : ("M" + (mentorIndex + 1));
-
-            String rawCapacity = extractFormValue(requestBody, "m" + (mentorIndex + 1) + "_cap").trim();
-            int parsedCapacity = 0;
-            try {
-                parsedCapacity = Integer.parseInt(rawCapacity);
-            } catch (NumberFormatException numberFormatException) {
-                parsedCapacity = 0;
+            int mentorNumber = mentorIndex + 1;
+            String rawName = TextTools.trim(TextTools.findFormValue(requestBody, TextTools.fieldName('m', mentorNumber, "_name")));
+            if (rawName.length() > 0) {
+                mentorNames[mentorIndex] = rawName;
+            } else {
+                mentorNames[mentorIndex] = TextTools.labelWithNumber('M', mentorNumber);
             }
-            if (parsedCapacity < 0) {
-                parsedCapacity = 0;
-            }
-            mentorCapacities[mentorIndex] = parsedCapacity;
+            String rawCapacity = TextTools.trim(TextTools.findFormValue(requestBody, TextTools.fieldName('m', mentorNumber, "_cap")));
+            mentorCapacities[mentorIndex] = TextTools.parseNonNegativeNumber(rawCapacity);
         }
 
-        String algorithmChoice = extractFormValue(requestBody, "algorithm").trim();
-        if (algorithmChoice.length() == 0) {
-            algorithmChoice = "ek";
-        }
+        String algorithmChoice = TextTools.trim(TextTools.findFormValue(requestBody, "algorithm"));
 
         int sourceNode = 0;
         int sinkNode = 1 + STUDENT_COUNT + MENTOR_COUNT;
@@ -196,7 +298,7 @@ class CampusFlowEngine {
                     continue;
                 }
                 for (int mentorIndex = 0; mentorIndex < MENTOR_COUNT; mentorIndex++) {
-                    if (mentorNames[mentorIndex].equalsIgnoreCase(preferredMentorName)) {
+                    if (TextTools.sameTextIgnoringCase(mentorNames[mentorIndex], preferredMentorName)) {
                         int mentorNode = 1 + STUDENT_COUNT + mentorIndex;
                         if (capacity[studentNode][mentorNode] == 0) {
                             capacity[studentNode][mentorNode] = 1;
@@ -242,14 +344,14 @@ class CampusFlowEngine {
         String primaryAlgorithmName;
         String primaryComplexity;
 
-        if (algorithmChoice.equals("dinic")) {
+        if (TextTools.sameText(algorithmChoice, "dinic")) {
             primaryResidual = dinic.getResidualCapacity();
             primaryMaxFlow = dinic.maximumFlow;
             primaryExecutionNanos = dinic.executionTimeNanos;
             primaryIterations = dinic.iterations;
             primaryAlgorithmName = "Dinic";
             primaryComplexity = "O(V^2 * E) general bound";
-        } else if (algorithmChoice.equals("mcmf")) {
+        } else if (TextTools.sameText(algorithmChoice, "mcmf")) {
             primaryResidual = minCostMaxFlow.getResidualCapacity();
             primaryMaxFlow = minCostMaxFlow.maximumFlow;
             primaryExecutionNanos = minCostMaxFlow.executionTimeNanos;
@@ -292,10 +394,10 @@ class CampusFlowEngine {
 
         MinCut minCut = new MinCut(vertexCount, primaryResidual, sourceNode);
         minCut.runMinCut();
-        String cutReport = minCut.buildCutEdgeReport(capacity, nodeNames);
+        TextBuilder cutReport = minCut.buildCutEdgeReport(capacity, nodeNames);
 
         return ResultPageBuilder.build(
-            studentNames, studentPreferences, mentorNames, mentorCapacities,
+            studentNames, mentorNames, mentorCapacities,
             compatible, studentAssignedMentorIndex, mentorAssignedCount,
             primaryAlgorithmName, primaryComplexity, primaryMaxFlow, primaryExecutionNanos, primaryIterations,
             cutReport, bipartiteMatching.totalMatched,
@@ -303,34 +405,15 @@ class CampusFlowEngine {
             minCostMaxFlow.maximumFlow, minCostMaxFlow.totalCost, cost
         );
     }
-
-    private static String extractFormValue(String body, String key) {
-        String searchKey = key + "=";
-        int startIndex = body.indexOf(searchKey);
-        if (startIndex == -1) {
-            return "";
-        }
-        startIndex = startIndex + searchKey.length();
-        int endIndex = body.indexOf('&', startIndex);
-        if (endIndex == -1) {
-            endIndex = body.length();
-        }
-        String rawValue = body.substring(startIndex, endIndex);
-        try {
-            return URLDecoder.decode(rawValue, "UTF-8");
-        } catch (Exception decodingException) {
-            return rawValue;
-        }
-    }
 }
 
 class ResultPageBuilder {
 
-    public static String build(
-        String[] studentNames, String[][] studentPreferences, String[] mentorNames, int[] mentorCapacities,
+    public static TextBuilder build(
+        String[] studentNames, String[] mentorNames, int[] mentorCapacities,
         boolean[][] compatible, int[] studentAssignedMentorIndex, int[] mentorAssignedCount,
         String primaryAlgorithmName, String primaryComplexity, int primaryMaxFlow, long primaryExecutionNanos, int primaryIterations,
-        String cutReport, int bipartiteMatchedCount,
+        TextBuilder cutReport, int bipartiteMatchedCount,
         int edmondsKarpMaxFlow, int dinicMaxFlow,
         int minCostMaxFlowValue, int minCostTotalCost, int[][] cost
     ) {
@@ -350,10 +433,12 @@ class ResultPageBuilder {
         }
         int unallocatedCount = studentCount - allocatedCount;
 
-        double executionMillis = primaryExecutionNanos / 1000000.0;
-        boolean flowAlgorithmsMatch = edmondsKarpMaxFlow == dinicMaxFlow;
+        int utilizationPercent = 0;
+        if (totalMentorCapacity > 0) {
+            utilizationPercent = (allocatedCount * 100) / totalMentorCapacity;
+        }
 
-        StringBuilder page = new StringBuilder();
+        TextBuilder page = new TextBuilder();
         page.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<title>CampusFlow Result</title>\n");
         page.append("<style>\n");
         page.append(":root { --navy:#10213f; --navy-soft:#1c3766; --blue-accent:#2f6fed; --blue-pale:#eaf1ff; --border-color:#dbe3f0; --text-main:#1b2436; --text-muted:#5b6b85; --bg-page:#f5f7fb; --white:#ffffff; --green:#1f8a4c; --red:#c0392b; }\n");
@@ -377,35 +462,32 @@ class ResultPageBuilder {
         page.append(".flow-diagram { text-align:center; font-size:15px; color:var(--navy-soft); font-weight:bold; padding:18px; background:var(--blue-pale); border-radius:8px; letter-spacing:1px; }\n");
         page.append("pre.report-block { background:var(--bg-page); border:1px solid var(--border-color); border-radius:6px; padding:14px; font-size:13px; white-space:pre-wrap; }\n");
         page.append(".back-link { display:inline-block; margin-top:6px; background:var(--blue-accent); color:var(--white); padding:10px 20px; border-radius:6px; text-decoration:none; }\n");
-        page.append(".complexity { display:inline-block; margin-top:8px; background:var(--navy); color:var(--white); padding:3px 10px; border-radius:4px; font-size:12px; }\n");
         page.append("@media (max-width:720px) { .summary-grid { grid-template-columns:1fr 1fr; } }\n");
         page.append("</style>\n</head>\n<body>\n");
 
         page.append("<header class=\"top-header\">\n<h1>CampusFlow</h1>\n<p>Allocation Result</p>\n</header>\n<main>\n");
 
         page.append("<section class=\"card\">\n<h2>Allocation Results</h2>\n<div class=\"summary-grid\">\n");
-        appendSummaryTile(page, String.valueOf(studentCount), "Students");
-        appendSummaryTile(page, String.valueOf(mentorCount), "Mentors");
-        appendSummaryTile(page, String.valueOf(totalMentorCapacity), "Total Mentor Capacity");
-        appendSummaryTile(page, String.valueOf(allocatedCount), "Allocated");
-        appendSummaryTile(page, String.valueOf(unallocatedCount), "Unallocated");
-        appendSummaryTile(page, String.valueOf(primaryMaxFlow), "Maximum Flow");
-        appendSummaryTile(page, primaryAlgorithmName, "Algorithm");
-        String utilizationText = totalMentorCapacity > 0 ? ((allocatedCount * 100) / totalMentorCapacity) + "%" : "0%";
-        appendSummaryTile(page, utilizationText, "Capacity Utilization");
+        appendNumberTile(page, studentCount, "Students");
+        appendNumberTile(page, mentorCount, "Mentors");
+        appendNumberTile(page, totalMentorCapacity, "Total Mentor Capacity");
+        appendNumberTile(page, allocatedCount, "Allocated");
+        appendNumberTile(page, unallocatedCount, "Unallocated");
+        appendNumberTile(page, primaryMaxFlow, "Maximum Flow");
+        appendTextTile(page, primaryAlgorithmName, "Algorithm");
+        page.append("<div class=\"summary-tile\"><div class=\"value\">").append(utilizationPercent).append("%</div><div class=\"label\">Capacity Utilization</div></div>\n");
         page.append("</div>\n</section>\n");
 
         page.append("<section class=\"card\">\n<h2>Allocation Table</h2>\n<table>\n");
         page.append("<tr><th>Student</th><th>Assigned Mentor</th><th>Preference Rank</th><th>Status</th></tr>\n");
         for (int studentIndex = 0; studentIndex < studentCount; studentIndex++) {
             int assignedMentorIndex = studentAssignedMentorIndex[studentIndex];
-            page.append("<tr><td>").append(studentNames[studentIndex]).append("</td>");
+            page.append("<tr><td>").appendEscaped(studentNames[studentIndex]).append("</td>");
             if (assignedMentorIndex != -1) {
                 int studentNode = 1 + studentIndex;
                 int mentorNode = 1 + studentCount + assignedMentorIndex;
-                int preferenceRank = cost[studentNode][mentorNode];
-                page.append("<td>").append(mentorNames[assignedMentorIndex]).append("</td>");
-                page.append("<td>").append(preferenceRank).append("</td>");
+                page.append("<td>").appendEscaped(mentorNames[assignedMentorIndex]).append("</td>");
+                page.append("<td>").append(cost[studentNode][mentorNode]).append("</td>");
                 page.append("<td class=\"status-allocated\">Allocated</td>");
             } else {
                 page.append("<td>-</td><td>-</td><td class=\"status-unallocated\">Unallocated</td>");
@@ -415,86 +497,87 @@ class ResultPageBuilder {
         page.append("</table>\n</section>\n");
 
         page.append("<section class=\"card\">\n<h2>Bottleneck Analysis</h2>\n<table>\n");
-        page.append("<tr><th>Mentor</th><th>Seats Used</th><th>Capacity</th></tr>\n");
+        page.append("<tr><th>Mentor</th><th>Seats Used</th><th>Status</th></tr>\n");
         for (int mentorIndex = 0; mentorIndex < mentorCount; mentorIndex++) {
-            page.append("<tr><td>").append(mentorNames[mentorIndex]).append("</td><td>");
+            page.append("<tr><td>").appendEscaped(mentorNames[mentorIndex]).append("</td><td>");
             page.append(mentorAssignedCount[mentorIndex]).append(" / ").append(mentorCapacities[mentorIndex]);
-            page.append("</td><td>").append(mentorAssignedCount[mentorIndex] >= mentorCapacities[mentorIndex] ? "Saturated" : "Available").append("</td></tr>\n");
+            if (mentorAssignedCount[mentorIndex] >= mentorCapacities[mentorIndex]) {
+                page.append("</td><td>Saturated</td></tr>\n");
+            } else {
+                page.append("</td><td>Available</td></tr>\n");
+            }
         }
         page.append("</table>\n");
-        page.append("<pre class=\"report-block\">").append(escapeHtml(cutReport)).append("</pre>\n");
+        page.append("<pre class=\"report-block\">").appendEscaped(cutReport.toText()).append("</pre>\n");
 
         for (int studentIndex = 0; studentIndex < studentCount; studentIndex++) {
-            if (studentAssignedMentorIndex[studentIndex] == -1) {
-                boolean hasCompatibleMentor = false;
-                boolean allCompatibleFull = true;
-                for (int mentorIndex = 0; mentorIndex < mentorCount; mentorIndex++) {
-                    if (compatible[studentIndex][mentorIndex]) {
-                        hasCompatibleMentor = true;
-                        if (mentorAssignedCount[mentorIndex] < mentorCapacities[mentorIndex]) {
-                            allCompatibleFull = false;
-                        }
+            if (studentAssignedMentorIndex[studentIndex] != -1) {
+                continue;
+            }
+            boolean hasCompatibleMentor = false;
+            boolean allCompatibleFull = true;
+            for (int mentorIndex = 0; mentorIndex < mentorCount; mentorIndex++) {
+                if (compatible[studentIndex][mentorIndex]) {
+                    hasCompatibleMentor = true;
+                    if (mentorAssignedCount[mentorIndex] < mentorCapacities[mentorIndex]) {
+                        allCompatibleFull = false;
                     }
                 }
-                page.append("<p>").append(studentNames[studentIndex]);
-                if (!hasCompatibleMentor) {
-                    page.append(" could not be allocated because it has no compatible mentor.</p>\n");
-                } else if (allCompatibleFull) {
-                    page.append(" could not be allocated because every compatible mentor reached maximum capacity.</p>\n");
-                } else {
-                    page.append(" could not be allocated because the maximum flow algorithm found a better overall assignment for other students.</p>\n");
-                }
+            }
+            page.append("<p>").appendEscaped(studentNames[studentIndex]);
+            if (!hasCompatibleMentor) {
+                page.append(" could not be allocated because it has no compatible mentor.</p>\n");
+            } else if (allCompatibleFull) {
+                page.append(" could not be allocated because every compatible mentor reached maximum capacity.</p>\n");
+            } else {
+                page.append(" could not be allocated because the maximum flow algorithm found a better overall assignment for other students.</p>\n");
             }
         }
         page.append("</section>\n");
 
         page.append("<section class=\"card\">\n<h2>Algorithm Statistics</h2>\n<table>\n");
-        appendStatRow(page, "Algorithm Used", primaryAlgorithmName);
-        appendStatRow(page, "Maximum Flow", String.valueOf(primaryMaxFlow));
-        appendStatRow(page, "Execution Time", String.format("%.3f ms", executionMillis));
-        appendStatRow(page, "Iterations", String.valueOf(primaryIterations));
-        appendStatRow(page, "Time Complexity", primaryComplexity);
-        appendStatRow(page, "Bipartite Matching Baseline", bipartiteMatchedCount + " matched");
-        appendStatRow(page, "Edmonds-Karp Max Flow", String.valueOf(edmondsKarpMaxFlow));
-        appendStatRow(page, "Dinic Max Flow", String.valueOf(dinicMaxFlow));
-        appendStatRow(page, "Edmonds-Karp / Dinic Agreement", flowAlgorithmsMatch ? "Match" : "Mismatch");
-        appendStatRow(page, "Min-Cost Max-Flow Allocation", String.valueOf(minCostMaxFlowValue));
-        appendStatRow(page, "Min-Cost Max-Flow Total Preference Cost", String.valueOf(minCostTotalCost));
+        appendTextRow(page, "Algorithm Used", primaryAlgorithmName);
+        appendNumberRow(page, "Maximum Flow", primaryMaxFlow);
+        page.append("<tr><td>Execution Time</td><td>").appendMilliseconds(primaryExecutionNanos).append("</td></tr>\n");
+        appendNumberRow(page, "Iterations", primaryIterations);
+        appendTextRow(page, "Time Complexity", primaryComplexity);
+        page.append("<tr><td>Bipartite Matching Baseline</td><td>").append(bipartiteMatchedCount).append(" matched</td></tr>\n");
+        appendNumberRow(page, "Edmonds-Karp Max Flow", edmondsKarpMaxFlow);
+        appendNumberRow(page, "Dinic Max Flow", dinicMaxFlow);
+        if (edmondsKarpMaxFlow == dinicMaxFlow) {
+            appendTextRow(page, "Edmonds-Karp / Dinic Agreement", "Match");
+        } else {
+            appendTextRow(page, "Edmonds-Karp / Dinic Agreement", "Mismatch");
+        }
+        appendNumberRow(page, "Min-Cost Max-Flow Allocation", minCostMaxFlowValue);
+        appendNumberRow(page, "Min-Cost Max-Flow Total Preference Cost", minCostTotalCost);
         page.append("</table>\n</section>\n");
 
         page.append("<section class=\"card\">\n<h2>Graph Model Recap</h2>\n");
         page.append("<div class=\"flow-diagram\">SOURCE &rarr; STUDENTS &rarr; MENTORS &rarr; SINK</div>\n");
-        page.append("<p>Source-to-student capacity = 1. Student-to-mentor capacity = 1 for compatible pairs. Mentor-to-sink capacity = mentor seats. Maximum flow = ").append(primaryMaxFlow).append(" successful assignments.</p>\n");
+        page.append("<p>Source-to-student capacity = 1. Student-to-mentor capacity = 1 for compatible pairs. Mentor-to-sink capacity = mentor seats. Maximum flow = ");
+        page.append(primaryMaxFlow).append(" successful assignments.</p>\n");
         page.append("</section>\n");
 
         page.append("<a class=\"back-link\" href=\"/\">Back to CampusFlow</a>\n");
         page.append("</main>\n</body>\n</html>\n");
 
-        return page.toString();
+        return page;
     }
 
-    private static void appendSummaryTile(StringBuilder page, String value, String label) {
+    private static void appendNumberTile(TextBuilder page, int value, String label) {
         page.append("<div class=\"summary-tile\"><div class=\"value\">").append(value).append("</div><div class=\"label\">").append(label).append("</div></div>\n");
     }
 
-    private static void appendStatRow(StringBuilder page, String label, String value) {
-        page.append("<tr><td>").append(label).append("</td><td>").append(value).append("</td></tr>\n");
+    private static void appendTextTile(TextBuilder page, String value, String label) {
+        page.append("<div class=\"summary-tile\"><div class=\"value\">").appendEscaped(value).append("</div><div class=\"label\">").append(label).append("</div></div>\n");
     }
 
-    private static String escapeHtml(String rawText) {
-        StringBuilder escaped = new StringBuilder();
-        for (int characterIndex = 0; characterIndex < rawText.length(); characterIndex++) {
-            char currentChar = rawText.charAt(characterIndex);
-            if (currentChar == '<') {
-                escaped.append("&lt;");
-            } else if (currentChar == '>') {
-                escaped.append("&gt;");
-            } else if (currentChar == '&') {
-                escaped.append("&amp;");
-            } else {
-                escaped.append(currentChar);
-            }
-        }
-        return escaped.toString();
+    private static void appendTextRow(TextBuilder page, String label, String value) {
+        page.append("<tr><td>").append(label).append("</td><td>").appendEscaped(value).append("</td></tr>\n");
+    }
+
+    private static void appendNumberRow(TextBuilder page, String label, int value) {
+        page.append("<tr><td>").append(label).append("</td><td>").append(value).append("</td></tr>\n");
     }
 }

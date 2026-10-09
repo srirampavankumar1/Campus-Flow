@@ -37,8 +37,8 @@ public class MinCut {
         }
     }
 
-    public String buildCutEdgeReport(int[][] originalCapacity, String[] nodeNames) {
-        StringBuilder report = new StringBuilder();
+    public TextBuilder buildCutEdgeReport(int[][] originalCapacity, String[] nodeNames) {
+        TextBuilder report = new TextBuilder();
         boolean anyCutEdgeFound = false;
 
         for (int fromNode = 0; fromNode < vertexCount; fromNode++) {
@@ -59,6 +59,6 @@ public class MinCut {
             report.append("No saturated cut edges. Every compatible allocation was completed.\n");
         }
 
-        return report.toString();
+        return report;
     }
 }

@@ -39,7 +39,7 @@ public class Dinic {
             }
 
             while (true) {
-                int pushedFlow = sendBlockingFlow(source, Integer.MAX_VALUE);
+                int pushedFlow = sendBlockingFlow(source, 1000000000);
                 if (pushedFlow == 0) {
                     break;
                 }
